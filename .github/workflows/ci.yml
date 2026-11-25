@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  test:
+    name: Blender ${{ matrix.blender }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 4.2.0 is blender_version_min in the manifest; keep the newest release in the list too.
+        blender: ["4.2.0", "5.2.1"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Lint
+        run: pip install ruff && ruff check .
+      - name: Download Blender
+        run: |
+          v=${{ matrix.blender }}
+          url="https://download.blender.org/release/Blender${v%.*}/blender-${v}-linux-x64.tar.xz"
+          # Unpack outside the checkout, or `extension build` would pack Blender into the zip
+          curl -fsSL "$url" | tar -xJ -C "$RUNNER_TEMP"
+          echo "BLENDER=$RUNNER_TEMP/blender-${v}-linux-x64/blender" >> "$GITHUB_ENV"
+      - name: Check, test and build
+        run: python make.py build
+      - uses: actions/upload-artifact@v5
+        with:
+          name: shape_draw-blender-${{ matrix.blender }}
+          path: dist/*.zip
+
+  release:
+    # Push a tag like v0.2.0 to publish a GitHub release with the built zip attached.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: shape_draw-blender-5.2.1
+          path: dist
+      - name: Release notes from CHANGELOG.md
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v h="## $v" '$0==h{f=1;next} /^## /{f=0} f' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "No '## $v' section in CHANGELOG.md"; exit 1; }
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --title "Shape Draw ${GITHUB_REF_NAME#v}" --notes-file notes.md

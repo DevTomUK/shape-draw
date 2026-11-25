@@ -1,0 +1,16 @@
+# Lint settings only (this isn't a pip package). The Blender extension reviewers run ruff.
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+# bpy annotations (prop: FloatProperty(...)) and Blender's class naming
+# E402: bl_info comes before the imports, as Blender expects
+ignore = ["F722", "F821", "E731", "E402"]
+
+[tool.ruff.lint.per-file-ignores]
+# test scripts favour short one-liners
+"tests/*" = ["E401", "E501", "E702", "F841", "B905"]
+# frame builders bind each frame's values through default arguments on purpose
+"listing/make_demo.py" = ["B006", "B008"]

@@ -1,0 +1,46 @@
+schema_version = "1.0.0"
+
+# The id is permanent once published: never change it.
+id = "shape_draw"
+# Keep in sync with bl_info["version"] in shape_draw.py and CHANGELOG.md (make.py checks).
+version = "0.1.0"
+name = "Shape Draw"
+tagline = "Click out an outline with curved edges, then pull it into a mesh"
+maintainer = "DevTomUK"
+type = "add-on"
+
+website = "https://github.com/DevTomUK/shape-draw"
+
+tags = ["Modeling", "Add Mesh", "3D View"]
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+copyright = [
+  "2026 DevTomUK",
+]
+
+# No [permissions]: the add-on reads no files, uses no network or clipboard.
+
+[build]
+# Only the add-on itself ships: shape_draw.py, __init__.py, the manifest and LICENSE.
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".ruff_cache/",
+  "/.git/",
+  "/.github/",
+  "/.gitignore",
+  "/dist/",
+  "/tests/",
+  "/listing/",
+  "/make.py",
+  "/pyproject.toml",
+  "/README.md",
+  "/CHANGELOG.md",
+  "/PUBLISHING.md",
+  "*.zip",
+  "*.png",
+  "*.jpg",
+]
