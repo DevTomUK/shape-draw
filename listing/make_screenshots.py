@@ -2,10 +2,13 @@
 
     blender --factory-startup --window-geometry 0 0 1920 1080 --python listing/make_screenshots.py
 
-Writes listing/screenshots/0N-*.png (2:1, 1920 x 960: Superhive's gallery ratio),
-listing/previews_16x9/0N-*.png (16:9, 1920 x 1080: extensions.blender.org previews), listing/featured.png (16:9, 1920 x 1080, extensions.blender.org)
-and listing/featured.jpg (2:1, Superhive). Only the add-on's own overlay is drawn: there is
-no Blender logo in any shot. Your own Blender session and files aren't touched.
+Writes:
+  listing/screenshots/0N-*.png      2:1, 1920 x 960 (Superhive gallery)
+  listing/previews_16x9/0N-*.png    16:9, 1920 x 1080 (extensions.blender.org previews)
+  listing/featured.png              16:9, 1920 x 1080 (extensions.blender.org)
+  listing/featured.jpg              2:1 (Superhive)
+Only the add-on's own overlay is drawn: there is no Blender logo in any shot.
+Your own Blender session and files aren't touched.
 """
 import os
 import sys

@@ -287,7 +287,8 @@ def main():
     sys.path.insert(0, os.path.dirname(HERE))
     from make import find_blender
     res = subprocess.run([find_blender(), "--factory-startup", "--window-geometry", "0", "0", "1920", "1080",
-                          "--python", os.path.abspath(__file__)], capture_output=True, text=True)
+                          "--python", os.path.abspath(__file__)], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
     out = res.stdout + res.stderr
     if "FRAMES_OK" not in out:
         print(out[-3000:])

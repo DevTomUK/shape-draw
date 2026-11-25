@@ -49,4 +49,17 @@ ci = sd.circle_points((1, 1), 2)
 assert all(q["smooth"] for q in ci) and abs(sd.signed_area([q["co"] for q in ci]) - 8) < 1e-9
 quarter = sd.segment_length(ci[0], ci[1])
 assert abs(quarter - math.pi) < 2e-3, quarter  # a quarter of a radius-2 circle
+# re-edit helpers: splitting a curve keeps its shape
+a, b = ci[0], ci[1]
+a2, mid, b2 = sd.split_segment(a, b, 0.5)
+assert mid["smooth"] and abs(math.dist(mid["co"], (1, 1)) - 2) < 1e-3
+before = sd.segment_length(a, b)
+after = sd.segment_length(a2, mid) + sd.segment_length(mid, b2)
+assert abs(before - after) < 1e-3, (before, after)
+s1, m1, e1 = sd.split_segment(c((0, 0)), c((4, 0)), 0.25)
+assert m1["co"] == (1.0, 0.0) and not m1["smooth"]
+sp = sd.smooth_point(c((0, 0)), c((1, 1)), c((2, 0)))
+assert sp["smooth"] and abs(sp["h_in"][1] - 1) < 1e-9 and sp["h_in"][0] < 1 < sp["h_out"][0]
+assert sd.corner_point(sp)["h_in"] == (1, 1)
+assert sd.outline_ok([c((0, 0)), c((1, 0)), c((0, 1))]) and not sd.outline_ok([c((0, 0)), c((1, 0))])
 print("SMOKE_OK")

@@ -25,12 +25,19 @@ Extruding:
   type a number      exact height (Backspace edits, - flips)
   LMB / Enter        finish
   RMB                back to drawing
+Edit Outline (E with the tool active, the tool header, or the Object / right-click menu):
+  drag a point / handle      move it (Alt on a handle breaks the curve)
+  click an edge              add a point there, keeping the curve's shape
+  V / double-click a point   switch it between corner and curve
+  X / Delete over a point    remove it
+  H                          change the height (move up / down or type a number)
+  Enter / Space              keep the changes, Esc puts everything back
 """
 
 bl_info = {
     "name": "Shape Draw",
     "author": "DevTomUK",
-    "version": (0, 1, 0),
+    "version": (0, 2, 0),
     "blender": (4, 2, 0),
     "location": "3D View > Toolbar > Draw Shape, or Add > Draw Shape",
     "description": "Click out an outline with curved edges, then pull it into a mesh",
@@ -207,6 +214,53 @@ def point_at_length(origin, toward, length):
     if d < 1e-9:
         dx, dy, d = 1.0, 0.0, 1.0
     return (origin[0] + dx / d * length, origin[1] + dy / d * length)
+
+
+def _lerp(a, b, t):
+    return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+
+
+def split_segment(a, b, t):
+    """Split the edge a -> b at t without changing its shape (de Casteljau).
+
+    Returns (a2, mid, b2): copies of a and b with their inner handles shortened,
+    and the new point in between (smooth on a curve, a corner on a straight edge).
+    """
+    a2, b2 = dict(a), dict(b)
+    if segment_is_straight(a, b):
+        co = _lerp(a["co"], b["co"], t)
+        return a2, {"co": co, "h_in": co, "h_out": co, "smooth": False}, b2
+    p01 = _lerp(a["co"], a["h_out"], t)
+    p12 = _lerp(a["h_out"], b["h_in"], t)
+    p23 = _lerp(b["h_in"], b["co"], t)
+    p012 = _lerp(p01, p12, t)
+    p123 = _lerp(p12, p23, t)
+    co = _lerp(p012, p123, t)
+    a2["h_out"] = p01
+    b2["h_in"] = p23
+    return a2, {"co": co, "h_in": p012, "h_out": p123, "smooth": True}, b2
+
+
+def smooth_point(prev, p, nxt):
+    """p turned into a smooth point, its handles along the prev -> next direction."""
+    dx, dy = nxt["co"][0] - prev["co"][0], nxt["co"][1] - prev["co"][1]
+    d = math.hypot(dx, dy)
+    if d < 1e-9:
+        return dict(p, smooth=False)
+    ux, uy = dx / d, dy / d
+    li = math.dist(prev["co"], p["co"]) / 3
+    lo = math.dist(p["co"], nxt["co"]) / 3
+    x, y = p["co"]
+    return {"co": p["co"], "h_in": (x - ux * li, y - uy * li), "h_out": (x + ux * lo, y + uy * lo), "smooth": True}
+
+
+def corner_point(p):
+    return {"co": p["co"], "h_in": p["co"], "h_out": p["co"], "smooth": False}
+
+
+def outline_ok(points):
+    """Enough points to close a shape: 3, or 2 with a curve between them."""
+    return len(points) >= 3 or (len(points) == 2 and any(q["smooth"] for q in points))
 
 
 def segment_midpoint(a, b):
@@ -403,6 +457,75 @@ def join_into(context, obj, target):
     if me.users == 0:
         bpy.data.meshes.remove(me)
     return True
+
+
+# ---------------------------------------------------------------------------
+# Re-editing: the outline is stored on the object it built
+# ---------------------------------------------------------------------------
+
+OUTLINE_KEY = "shape_draw"
+
+
+def store_outline(ob, points, height, output, resolution, free_only, bevel, bevel_segments, base_z, cut):
+    """Save what built `ob`, in the object's own local XY plane (z = base_z)."""
+    flat = []
+    for q in points:
+        flat += [q["co"][0], q["co"][1], q["h_in"][0], q["h_in"][1], q["h_out"][0], q["h_out"][1],
+                 1.0 if q["smooth"] else 0.0]
+    ob[OUTLINE_KEY] = {
+        "version": 1, "points": flat, "height": float(height), "output": output,
+        "resolution": int(resolution), "free_only": bool(free_only), "bevel": float(bevel),
+        "bevel_segments": int(bevel_segments), "base_z": float(base_z), "cut": bool(cut),
+    }
+
+
+def load_outline(ob):
+    """The stored outline as a plain dict (points as point dicts), or None."""
+    data = ob.get(OUTLINE_KEY) if ob is not None else None
+    if not data:
+        return None
+    d = data.to_dict() if hasattr(data, "to_dict") else dict(data)
+    flat = list(d.get("points", []))
+    pts = []
+    for i in range(0, len(flat) - 6, 7):
+        x, y, ix, iy, ox, oy, sm = flat[i:i + 7]
+        pts.append({"co": (x, y), "h_in": (ix, iy), "h_out": (ox, oy), "smooth": sm > 0.5})
+    d["points"] = pts
+    return d
+
+
+def outline_owner(ob):
+    """The object whose outline an edit should open: `ob` itself, else its newest live cut."""
+    if ob is None:
+        return None
+    if OUTLINE_KEY in ob:
+        return ob
+    if ob.type == 'MESH':
+        for mod in reversed(ob.modifiers):
+            if mod.type == 'BOOLEAN' and mod.object is not None and OUTLINE_KEY in mod.object:
+                return mod.object
+    return None
+
+
+def rebuild_from_outline(ob, d):
+    """Replace ob's mesh / curve data from outline dict d, keeping the object as it is.
+
+    Modifiers, materials, transform and parent all stay. Returns the old data
+    (no longer used by ob) so callers can restore or free it.
+    """
+    old = ob.data
+    pts = d["points"]
+    if d["output"] == 'CURVE':
+        new = build_curve(old.name, pts, d["height"], d["bevel"], d["bevel_segments"], d["resolution"])
+    else:
+        samples = dedupe_ring(sample_outline(pts, d["resolution"]))
+        if len(samples) < 3:
+            return None
+        new = build_mesh(old.name, samples, d["height"], free_edges_only=d["free_only"])
+    for mat in old.materials:
+        new.materials.append(mat)
+    ob.data = new
+    return old
 
 
 # ---------------------------------------------------------------------------
@@ -635,6 +758,13 @@ class VIEW3D_OT_shape_draw(bpy.types.Operator):
         obj = bpy.data.objects.new(name, data)
         context.collection.objects.link(obj)
         obj.matrix_world = mat
+        if attach != 'JOIN':  # a joined shape is merged away, nothing left to re-edit
+            local_pts = [{"co": shift(p["co"]), "h_in": shift(p["h_in"]),
+                          "h_out": shift(p["h_out"]), "smooth": p["smooth"]} for p in pts]
+            curve = output == 'CURVE'
+            store_outline(obj, local_pts, self.height if curve else height, output, self.resolution,
+                          self.bevel_free_only, self.bevel, self.bevel_segments,
+                          -self.height * 0.5 if curve else 0.0, attach == 'CUT')
         if output == 'MESH' and self.bevel > 0 and abs(height) > 1e-6:
             mod = obj.modifiers.new("Bevel", 'BEVEL')
             mod.width = self.bevel
@@ -1435,6 +1565,388 @@ class VIEW3D_OT_shape_draw(bpy.types.Operator):
             print("Shape Draw text error:", exc)
 
 
+EDIT_HINT = ("Drag: move point / handle   Click edge: add point   V / double-click: corner or curve   "
+             "X: delete point   H: height   Ctrl: no snap   Enter: done   Esc: cancel")
+HEIGHT_HINT = ("Move up / down: height   Type: exact height   Click / Enter: back to the outline   "
+               "Ctrl: no snap   Esc: cancel")
+PICK_PX = 10.0
+
+
+class VIEW3D_OT_shape_draw_edit(bpy.types.Operator):
+    """Reopen the outline a shape was drawn from: move points, reshape curves, change the height"""
+    bl_idname = "view3d.shape_draw_edit"
+    bl_label = "Edit Outline"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.area is not None and context.area.type == 'VIEW_3D' and context.mode == 'OBJECT'
+                and outline_owner(context.active_object) is not None)
+
+    # -- coordinates: the object's own local plane z = base_z ----------------
+
+    def _matrix(self):
+        return self.ob.matrix_world
+
+    def _to_world(self, xy):
+        return self._matrix() @ Vector((xy[0], xy[1], self.d["base_z"]))
+
+    def _to_px(self, context, xy):
+        return view3d_utils.location_3d_to_region_2d(context.region, context.region_data, self._to_world(xy))
+
+    def _mouse_xy(self, context, event, snap=True):
+        mouse = (event.mouse_region_x, event.mouse_region_y)
+        origin = view3d_utils.region_2d_to_origin_3d(context.region, context.region_data, mouse)
+        direction = view3d_utils.region_2d_to_vector_3d(context.region, context.region_data, mouse)
+        inv = self._matrix().inverted_safe()
+        o = inv @ origin
+        v = inv.to_3x3() @ direction
+        if abs(v.z) < 1e-9:
+            return None
+        t = (self.d["base_z"] - o.z) / v.z
+        xy = (o.x + v.x * t, o.y + v.y * t)
+        st = context.scene.shape_draw
+        if snap and st.use_snap and not event.ctrl and st.snap_step > 0:
+            xy = (snap_value(xy[0], st.snap_step), snap_value(xy[1], st.snap_step))
+        return xy
+
+    # -- picking ------------------------------------------------------------
+
+    def _pick(self, context, event):
+        """What's under the mouse: ('POINT', i) / ('IN' or 'OUT', i) handle / ('EDGE', i, t) / None."""
+        m = Vector((event.mouse_region_x, event.mouse_region_y))
+        best, best_d = None, PICK_PX
+        for i, q in enumerate(self.pts):
+            if q["smooth"]:
+                for kind, key in (('IN', "h_in"), ('OUT', "h_out")):
+                    px = self._to_px(context, q[key])
+                    if px is not None and (px - m).length < best_d:
+                        best, best_d = (kind, i), (px - m).length
+        for i, q in enumerate(self.pts):  # points win over handles sitting on top of them
+            px = self._to_px(context, q["co"])
+            if px is not None and (px - m).length < max(best_d, PICK_PX * 0.8):
+                best, best_d = ('POINT', i), (px - m).length
+        if best is not None:
+            return best
+        n = len(self.pts)
+        best_d = PICK_PX * 0.8
+        for i in range(n):
+            a, b = self.pts[i], self.pts[(i + 1) % n]
+            prev = None
+            for k in range(25):
+                t = k / 24
+                xy = _lerp(a["co"], b["co"], t) if segment_is_straight(a, b) else \
+                    cubic(a["co"], a["h_out"], b["h_in"], b["co"], t)
+                px = self._to_px(context, xy)
+                if px is None:
+                    prev = None
+                    continue
+                if prev is not None:
+                    seg = px - prev[0]
+                    ln = seg.length_squared
+                    u = 0.0 if ln < 1e-9 else max(0.0, min(1.0, (m - prev[0]).dot(seg) / ln))
+                    dist = (prev[0] + seg * u - m).length
+                    if dist < best_d:
+                        best, best_d = ('EDGE', i, prev[1] + (t - prev[1]) * u), dist
+                prev = (px, t)
+        return best
+
+    # -- editing ------------------------------------------------------------
+
+    def _rebuild(self):
+        self.d["points"] = [dict(q) for q in self.pts]
+        old = rebuild_from_outline(self.ob, self.d)
+        if old is not None and old is not self.original_data and old.users == 0:
+            if isinstance(old, bpy.types.Mesh):
+                bpy.data.meshes.remove(old)
+            else:
+                bpy.data.curves.remove(old)
+
+    def _set_height(self, h):
+        if self.d["cut"]:
+            h = -abs(h)
+        old_h = self.d["height"]
+        self.d["height"] = h
+        if self.d["output"] == 'CURVE':
+            # The curve sits around its middle: move the object so the base stays put.
+            self.ob.matrix_basis = self.ob.matrix_basis @ Matrix.Translation((0, 0, (h - old_h) * 0.5))
+            self.d["base_z"] = -h * 0.5
+
+    def _toggle_smooth(self, i):
+        n = len(self.pts)
+        q = self.pts[i]
+        self.pts[i] = corner_point(q) if q["smooth"] else smooth_point(self.pts[i - 1], q, self.pts[(i + 1) % n])
+
+    def _delete(self, i):
+        trial = self.pts[:i] + self.pts[i + 1:]
+        if outline_ok(trial):
+            self.pts = trial
+            return True
+        self.report({'WARNING'}, "A shape needs at least 3 points")
+        return False
+
+    def _insert(self, i, t):
+        n = len(self.pts)
+        j = (i + 1) % n
+        a2, mid, b2 = split_segment(self.pts[i], self.pts[j], t)
+        self.pts[i], self.pts[j] = a2, b2
+        self.pts.insert(i + 1, mid)
+        return i + 1
+
+    # -- modal --------------------------------------------------------------
+
+    def invoke(self, context, event):
+        self.ob = outline_owner(context.active_object)
+        self.d = load_outline(self.ob)
+        if self.d is None or not outline_ok(self.d["points"]):
+            self.report({'WARNING'}, "This object has no outline to edit (only shapes drawn with Shape Draw do)")
+            return {'CANCELLED'}
+        self.pts = [dict(q) for q in self.d["points"]]
+        self.original = {k: (list(v) if isinstance(v, list) else v) for k, v in self.d.items()}
+        self.original["points"] = [dict(q) for q in self.d["points"]]
+        self.original_data = self.ob.data
+        self.original_data.use_fake_user = True  # keep it alive in case of Esc
+        self.original_basis = self.ob.matrix_basis.copy()
+        self.was_hidden = self.ob.hide_get()
+        self.ob.hide_set(False)
+        self.stage = 'EDIT'
+        self.hover = None
+        self.drag = None          # (kind, index, start mouse xy, start point copy)
+        self.typed = ""
+        self.h_start = 0.0
+        self.h_mouse = 0.0
+        self._h3d = bpy.types.SpaceView3D.draw_handler_add(self._draw_3d, (context,), 'WINDOW', 'POST_VIEW')
+        self._h2d = bpy.types.SpaceView3D.draw_handler_add(self._draw_2d, (context,), 'WINDOW', 'POST_PIXEL')
+        context.window_manager.modal_handler_add(self)
+        context.workspace.status_text_set(EDIT_HINT)
+        context.area.tag_redraw()
+        return {'RUNNING_MODAL'}
+
+    def _end(self, context, keep):
+        bpy.types.SpaceView3D.draw_handler_remove(self._h3d, 'WINDOW')
+        bpy.types.SpaceView3D.draw_handler_remove(self._h2d, 'WINDOW')
+        context.workspace.status_text_set(None)
+        context.area.header_text_set(None)
+        self.original_data.use_fake_user = False
+        if keep:
+            store_outline(self.ob, self.pts, self.d["height"], self.d["output"], self.d["resolution"],
+                          self.d["free_only"], self.d["bevel"], self.d["bevel_segments"],
+                          self.d["base_z"], self.d["cut"])
+            if self.ob.data is not self.original_data and self.original_data.users == 0:
+                if isinstance(self.original_data, bpy.types.Mesh):
+                    bpy.data.meshes.remove(self.original_data)
+                else:
+                    bpy.data.curves.remove(self.original_data)
+        else:
+            current = self.ob.data
+            self.ob.data = self.original_data
+            self.ob.matrix_basis = self.original_basis
+            if current is not self.original_data and current.users == 0:
+                if isinstance(current, bpy.types.Mesh):
+                    bpy.data.meshes.remove(current)
+                else:
+                    bpy.data.curves.remove(current)
+        if self.was_hidden:
+            self.ob.hide_set(True)
+        context.area.tag_redraw()
+        return {'FINISHED'} if keep else {'CANCELLED'}
+
+    def modal(self, context, event):
+        try:
+            return self._modal(context, event)
+        except Exception:
+            self._end(context, keep=False)
+            raise
+
+    def _height_px_scale(self, context):
+        """World units per pixel of vertical mouse travel, at the shape."""
+        c = bounds_center([q["co"] for q in self.pts])
+        w = self._to_world(c)
+        p0 = view3d_utils.region_2d_to_location_3d(context.region, context.region_data, (0, 0), w)
+        p1 = view3d_utils.region_2d_to_location_3d(context.region, context.region_data, (0, 1), w)
+        scale = self._matrix().to_scale().z or 1.0
+        return (p1 - p0).length / abs(scale)
+
+    def _modal(self, context, event):
+        context.area.tag_redraw()
+        t, v = event.type, event.value
+        if t in NAV_EVENTS:
+            return {'PASS_THROUGH'}
+        if t == 'ESC' and v == 'PRESS':
+            return self._end(context, keep=False)
+
+        if self.stage == 'HEIGHT':
+            st = context.scene.shape_draw
+            if t == 'MOUSEMOVE' or t in {'LEFT_CTRL', 'RIGHT_CTRL'}:
+                if not self.typed:
+                    h = self.h_start + (event.mouse_region_y - self.h_mouse) * self._height_px_scale(context) \
+                        * (-1 if self.h_start < 0 else 1)
+                    if st.use_snap and not event.ctrl and st.snap_step > 0:
+                        h = snap_value(h, st.snap_step)
+                    self._set_height(h)
+            elif v == 'PRESS' and t in NUM_KEYS:
+                self.typed += NUM_KEYS[t]
+            elif v == 'PRESS' and t == 'BACK_SPACE':
+                self.typed = self.typed[:-1]
+            elif v == 'PRESS' and t in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER', 'SPACE'}:
+                self.stage = 'EDIT'
+                self._rebuild()
+                context.area.header_text_set(None)
+                context.workspace.status_text_set(EDIT_HINT)
+                return {'RUNNING_MODAL'}
+            elif t == 'RIGHTMOUSE' and v == 'PRESS':
+                self._set_height(self.h_start)
+                self.typed = ""
+                self.stage = 'EDIT'
+                self._rebuild()
+                context.area.header_text_set(None)
+                context.workspace.status_text_set(EDIT_HINT)
+                return {'RUNNING_MODAL'}
+            if self.typed:
+                h = parse_length(context, self.typed)
+                if h is not None:
+                    self._set_height(h if self.h_start >= 0 else -h)
+            shown = self.typed if self.typed else format_length(context, abs(self.d["height"]))
+            context.area.header_text_set(f"Height: {shown}")
+            if t != 'MOUSEMOVE':
+                self._rebuild()
+            return {'RUNNING_MODAL'}
+
+        # EDIT stage
+        if t == 'MOUSEMOVE':
+            if self.drag is not None:
+                kind, i, start, orig = self.drag
+                xy = self._mouse_xy(context, event, snap=(kind == 'POINT'))
+                if xy is not None:
+                    q = dict(orig)
+                    if kind == 'POINT':
+                        dx, dy = xy[0] - orig["co"][0], xy[1] - orig["co"][1]
+                        q["co"] = xy
+                        q["h_in"] = (orig["h_in"][0] + dx, orig["h_in"][1] + dy)
+                        q["h_out"] = (orig["h_out"][0] + dx, orig["h_out"][1] + dy)
+                    else:
+                        mine, other = ("h_in", "h_out") if kind == 'IN' else ("h_out", "h_in")
+                        q[mine] = xy
+                        if not event.alt:  # keep the curve smooth through the point (Alt breaks it)
+                            co = q["co"]
+                            q[other] = (2 * co[0] - xy[0], 2 * co[1] - xy[1])
+                    self.pts[i] = q
+            else:
+                self.hover = self._pick(context, event)
+        elif t == 'LEFTMOUSE' and v == 'PRESS':
+            pick = self._pick(context, event)
+            if pick is None:
+                return {'RUNNING_MODAL'}
+            if pick[0] == 'EDGE':
+                i = self._insert(pick[1], pick[2])
+                pick = ('POINT', i)
+            self.drag = (pick[0], pick[1], None, dict(self.pts[pick[1]]))
+        elif t == 'LEFTMOUSE' and v == 'DOUBLE_CLICK':
+            pick = self._pick(context, event)
+            if pick is not None and pick[0] == 'POINT':
+                self._toggle_smooth(pick[1])
+                self._rebuild()
+        elif t == 'LEFTMOUSE' and v == 'RELEASE':
+            if self.drag is not None:
+                self.drag = None
+                self._rebuild()
+                self.hover = self._pick(context, event)
+        elif v == 'PRESS' and t == 'V':
+            if self.hover is not None and self.hover[0] == 'POINT':
+                self._toggle_smooth(self.hover[1])
+                self._rebuild()
+        elif v == 'PRESS' and t in {'X', 'DEL'}:
+            if self.hover is not None and self.hover[0] == 'POINT' and self._delete(self.hover[1]):
+                self.hover = None
+                self._rebuild()
+        elif v == 'PRESS' and t == 'H':
+            self.stage = 'HEIGHT'
+            self.h_start = self.d["height"]
+            self.h_mouse = event.mouse_region_y
+            self.typed = ""
+            context.workspace.status_text_set(HEIGHT_HINT)
+        elif v == 'PRESS' and t in {'RET', 'NUMPAD_ENTER', 'SPACE'}:
+            self._rebuild()
+            return self._end(context, keep=True)
+        elif t == 'RIGHTMOUSE' and v == 'PRESS':
+            return self._end(context, keep=False)
+        return {'RUNNING_MODAL'}
+
+    # -- drawing --------------------------------------------------------------
+
+    def _draw_3d(self, context):
+        try:
+            gpu.state.blend_set('ALPHA')
+            gpu.state.depth_test_set('NONE')
+            n = len(self.pts)
+            samples = sample_outline(self.pts, 16, closed=True)
+            ring = [self._to_world(q[0]) for q in samples]
+            loop = []
+            for i in range(len(ring)):
+                loop += [ring[i], ring[(i + 1) % len(ring)]]
+            _draw_lines(loop, COL_LINE, 2.5)
+            hl, hp = [], []
+            for q in self.pts:
+                if q["smooth"]:
+                    hl += [self._to_world(q["h_in"]), self._to_world(q["co"]),
+                           self._to_world(q["co"]), self._to_world(q["h_out"])]
+                    hp += [self._to_world(q["h_in"]), self._to_world(q["h_out"])]
+            _draw_lines(hl, COL_HANDLE, 1.5)
+            _draw_points(hp, COL_HANDLE, 7.0)
+            _draw_points([self._to_world(q["co"]) for q in self.pts], COL_POINT, 9.0)
+            hv = self.hover if self.drag is None else (self.drag[0], self.drag[1])
+            if hv is not None and self.stage == 'EDIT':
+                if hv[0] == 'POINT' and hv[1] < n:
+                    _draw_points([self._to_world(self.pts[hv[1]]["co"])], COL_FIRST, 13.0)
+                elif hv[0] in {'IN', 'OUT'} and hv[1] < n:
+                    key = "h_in" if hv[0] == 'IN' else "h_out"
+                    _draw_points([self._to_world(self.pts[hv[1]][key])], COL_FIRST, 11.0)
+                elif hv[0] == 'EDGE':
+                    a, b = self.pts[hv[1]], self.pts[(hv[1] + 1) % n]
+                    _, mid, _ = split_segment(a, b, hv[2])
+                    _draw_points([self._to_world(mid["co"])], COL_LINE, 9.0)
+        except Exception as exc:
+            print("Shape Draw edit overlay error:", exc)
+        finally:
+            gpu.state.blend_set('NONE')
+            gpu.state.depth_test_set('LESS_EQUAL')
+
+    def _draw_2d(self, context):
+        try:
+            font = 0
+            blf.enable(font, blf.SHADOW)
+            blf.shadow(font, 3, 0, 0, 0, 0.9)
+            n = len(self.pts)
+            if self.stage == 'EDIT':
+                for i in range(n):
+                    a, b = self.pts[i], self.pts[(i + 1) % n]
+                    length = segment_length(a, b)
+                    if length < 1e-6:
+                        continue
+                    px = self._to_px(context, segment_midpoint(a, b))
+                    if px is None:
+                        continue
+                    text = format_length(context, length)
+                    blf.size(font, 12)
+                    w, _h = blf.dimensions(font, text)
+                    blf.color(font, 1.0, 0.85, 0.6, 0.9)
+                    blf.position(font, px.x - w / 2, px.y + 6, 0)
+                    blf.draw(font, text)
+            else:
+                c = bounds_center([q["co"] for q in self.pts])
+                px = self._to_px(context, c)
+                if px is not None:
+                    text = (self.typed + "_") if self.typed else format_length(context, abs(self.d["height"]))
+                    blf.size(font, 16)
+                    w, _h = blf.dimensions(font, text)
+                    blf.color(font, 1, 1, 1, 1)
+                    blf.position(font, px.x - w / 2, px.y + 14, 0)
+                    blf.draw(font, text)
+            blf.disable(font, blf.SHADOW)
+        except Exception as exc:
+            print("Shape Draw edit text error:", exc)
+
+
 # ---------------------------------------------------------------------------
 # Toolbar tool and menu
 # ---------------------------------------------------------------------------
@@ -1450,6 +1962,7 @@ class ShapeDrawTool(bpy.types.WorkSpaceTool):
     bl_widget = None
     bl_keymap = (
         ("view3d.shape_draw", {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
+        ("view3d.shape_draw_edit", {"type": 'E', "value": 'PRESS'}, None),
     )
 
     def draw_settings(context, layout, tool):
@@ -1466,13 +1979,21 @@ class ShapeDrawTool(bpy.types.WorkSpaceTool):
         layout.prop(props, "attach", text="Attach")
         layout.prop(props, "output", text="")
         layout.prop(props, "bevel")
+        if outline_owner(context.active_object) is not None:
+            layout.operator(VIEW3D_OT_shape_draw_edit.bl_idname, text="Edit Outline", icon='CURVE_BEZCURVE')
 
 
 def menu_add(self, context):
     self.layout.operator(VIEW3D_OT_shape_draw.bl_idname, text="Draw Shape", icon='CURVE_BEZCURVE')
 
 
-_classes = (ShapeDrawSettings, ShapeDrawPoint, VIEW3D_OT_shape_draw)
+def menu_edit(self, context):
+    if outline_owner(context.active_object) is not None:
+        self.layout.separator()
+        self.layout.operator(VIEW3D_OT_shape_draw_edit.bl_idname, icon='CURVE_BEZCURVE')
+
+
+_classes = (ShapeDrawSettings, ShapeDrawPoint, VIEW3D_OT_shape_draw, VIEW3D_OT_shape_draw_edit)
 
 
 def register():
@@ -1480,12 +2001,16 @@ def register():
         bpy.utils.register_class(c)
     bpy.types.Scene.shape_draw = PointerProperty(type=ShapeDrawSettings)
     bpy.types.VIEW3D_MT_add.append(menu_add)
+    bpy.types.VIEW3D_MT_object.append(menu_edit)
+    bpy.types.VIEW3D_MT_object_context_menu.append(menu_edit)
     bpy.utils.register_tool(ShapeDrawTool, after={"builtin.measure"}, separator=True)
 
 
 def unregister():
     bpy.utils.unregister_tool(ShapeDrawTool)
     bpy.types.VIEW3D_MT_add.remove(menu_add)
+    bpy.types.VIEW3D_MT_object.remove(menu_edit)
+    bpy.types.VIEW3D_MT_object_context_menu.remove(menu_edit)
     del bpy.types.Scene.shape_draw
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)

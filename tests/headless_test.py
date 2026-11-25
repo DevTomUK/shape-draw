@@ -196,4 +196,59 @@ v = volume(ob)
 print("QUICK_CIRCLE", res, v)
 assert v[1] and abs(v[0] - math.pi) < 0.02  # 12 segments per quarter: close to pi
 
+# Re-edit: the outline is stored on the object and rebuilds it in place
+for o in list(bpy.data.objects):
+    bpy.data.objects.remove(o, do_unlink=True)
+res, ob = run(sd.rect_points((0, 0), (2, 1)), 1.0, bevel=0.05, origin=(0, 0, 0))
+d = sd.load_outline(ob)
+print("STORED", [q["co"] for q in d["points"]], d["height"], d["output"])
+assert [q["co"] for q in d["points"]] == [(-1, -0.5), (1, -0.5), (1, 0.5), (-1, 0.5)] and d["height"] == 1.0
+ob.location = (5, 0, 0)  # moved by the user afterwards
+bpy.context.view_layer.update()
+before_matrix = ob.matrix_world.copy()
+mats = len(ob.data.materials)
+d["points"][1] = sd.corner_point({"co": (2, -0.5)})   # drag a corner out by 1 (handles move with it)
+d["points"][2] = sd.corner_point({"co": (2, 0.5)})
+old = sd.rebuild_from_outline(ob, d)
+bm = bmesh.new(); bm.from_mesh(ob.data); raw = round(bm.calc_volume(signed=True), 4); bm.free()
+print("REBUILT", raw, volume(ob), [(m.type, round(m.width, 3), m.segments, m.limit_method) for m in ob.modifiers], old is not ob.data)
+assert raw == 3.0 and volume(ob)[1] and [m.type for m in ob.modifiers] == ['BEVEL']
+assert ob.matrix_world == before_matrix and len(ob.data.materials) == mats
+
+# the edit operator's own steps, on a fake self
+E = sd.VIEW3D_OT_shape_draw_edit
+F = type("FE", (), {k: v for k, v in E.__dict__.items() if callable(v)})
+f = F()
+f.ob, f.d = ob, sd.load_outline(ob)
+f.pts = [dict(q) for q in f.d["points"]]
+f.original_data = ob.data
+f.report = lambda lvl, msg: print("REPORT", lvl, msg)
+i = f._insert(0, 0.5)                    # click the bottom edge: new corner in the middle
+assert len(f.pts) == 5 and f.pts[i]["co"] == (0.0, -0.5)
+f._toggle_smooth(i)                      # turn it into a curve point
+assert f.pts[i]["smooth"]
+f.pts[i] = dict(f.pts[i], co=(0.0, -1.0), h_in=(-0.6, -1.0), h_out=(0.6, -1.0))  # pull it down
+f._set_height(2.0)
+f._rebuild()
+v = volume(ob)
+print("EDITED", len(f.pts), v)
+assert v[1] and v[0] > 2 * 2.0  # taller, and the bulge adds area
+assert f._delete(i) and len(f.pts) == 4
+f.pts = f.pts[:2]
+assert not f._delete(0)                  # can't go below a closable outline
+
+# a cut's outline is reachable from the object it cuts, and stays a cut
+cube = fresh_cube()
+res, ob = run(inner, 0.5, attach='CUT', target=cube.name, origin=(0, 0, 1))
+owner = sd.outline_owner(cube)
+dc = sd.load_outline(owner)
+print("CUT_OWNER", owner.name, dc["cut"], round(dc["height"], 4))
+assert owner.name.startswith("Cut") and dc["cut"] and dc["height"] < 0
+
+# a curve shape stores its base below the object's middle
+res, ob = run(arch, 0.8, output='CURVE')
+dcv = sd.load_outline(ob)
+print("CURVE_STORED", dcv["output"], dcv["base_z"])
+assert dcv["output"] == 'CURVE' and abs(dcv["base_z"] + 0.4) < 1e-9
+
 print("ALL_OK")

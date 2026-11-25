@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 # The id is permanent once published: never change it.
 id = "shape_draw"
 # Keep in sync with bl_info["version"] in shape_draw.py and CHANGELOG.md (make.py checks).
-version = "0.1.0"
+version = "0.2.0"
 name = "Shape Draw"
 tagline = "Click out an outline with curved edges, then pull it into a mesh"
 maintainer = "DevTomUK"

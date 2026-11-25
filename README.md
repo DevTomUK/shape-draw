@@ -42,6 +42,21 @@ Pick **Draw Shape** in the toolbar (or Add > Draw Shape).
 | Click / Enter | finish |
 | Right-click | back to drawing |
 
+### Edit an outline later
+
+Select a shape and press **E** with the tool active (or use **Edit Outline** in the tool header, the Object menu or the right-click menu). The outline comes back on the object, wherever it is now:
+
+| Edit Outline | |
+| --- | --- |
+| Drag a point or handle | move it (Alt on a handle breaks the curve) |
+| Click an edge | add a point there |
+| V / double-click a point | corner or curve |
+| X / Delete over a point | remove it |
+| H | change the height |
+| Enter / Esc | keep / undo the changes |
+
+The object is rebuilt in place and keeps its position, parent, modifiers and materials. Select an object with a cut in it to edit its newest cut. Shapes made before 0.2.0 don't have a stored outline.
+
 Click a face of another object to start the shape on that face. Then use **Attach** in the redo panel to parent the shape to that object, join it in, or cut it in with a live boolean.
 
 Tool settings (header or N panel): shape (outline, rectangle, circle), grid step and snapping, Lock to Axis, Draw on Surfaces.

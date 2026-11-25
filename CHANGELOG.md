@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- Edit Outline: reopen a shape's outline to move points, reshape curves, add or remove points,
+  switch points between corner and curve, and change the height. The object is rebuilt in place,
+  keeping its position, parent, modifiers and materials. E with the tool active, the tool header,
+  or the Object and right-click menus. With a cut target selected, it edits the newest cutter.
+
 ## 0.1.0
 
 First release.

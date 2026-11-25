@@ -13,6 +13,7 @@ Shape Draw is a pen tool for modelling. Click out the outline you want, drag to 
 - **Precise when you need it**: grid snapping, live edge lengths in your scene's units, typed edge lengths and heights, Shift for 15° angles, and edges that lock onto the grid axis when nearly lined up.
 - **Pull it up**: move the mouse to set the height, or type an exact number.
 - **Attach to what you drew on**: parent to the object, join into it, or cut into it with a live boolean you can still move.
+- **Edit the outline later**: select a shape and press E to move points, reshape curves, add or remove points and change the height. It rebuilds in place, keeping its modifiers, materials and parent.
 - **Tweak afterwards**: the redo panel changes height, bevel (with an *Only Free Edges* option that leaves the base sharp), mesh or curve output and curve smoothness.
 
 ### How to use

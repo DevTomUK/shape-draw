@@ -47,7 +47,7 @@ def manifest_version():
 
 def run(cmd, expect=None):
     print(">", " ".join(f'"{c}"' if " " in c else c for c in cmd))
-    res = subprocess.run(cmd, cwd=HERE, capture_output=True, text=True)
+    res = subprocess.run(cmd, cwd=HERE, capture_output=True, text=True, encoding="utf-8", errors="replace")
     out = res.stdout + res.stderr
     if res.returncode != 0 or (expect and expect not in out) or "Traceback" in out:
         print(out)
