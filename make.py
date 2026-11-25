@@ -17,6 +17,8 @@ import sys
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Blender's output can contain characters a Windows console can't show: don't crash on them.
+sys.stdout.reconfigure(errors="replace")
 DIST = os.path.join(HERE, "dist")
 
 
