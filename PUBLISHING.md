@@ -38,7 +38,7 @@ Researched November 2026. Fees and rules change, so check each site before you u
 | Upload (zip) | `dist/shape_draw-<version>.zip` from `python make.py build` |
 | Icon | `listing/icon.png` (256 x 256) |
 | Featured image | extensions.blender.org: `listing/featured.png` (16:9) · Superhive: `listing/featured.jpg` (2:1) |
-| Screenshots / gallery | `listing/screenshots/01..05-*.png` (2:1, 1920 x 960: five, Superhive's minimum) |
+| Screenshots / gallery | extensions.blender.org previews: `listing/previews_16x9/*.png` (16:9, 1920 x 1080) · Superhive gallery: `listing/screenshots/*.png` (2:1, 1920 x 960; at least five) |
 | Description | `listing/description.md` |
 | Release notes | that version's section of `CHANGELOG.md` |
 | Website / source | the GitHub repo URL. Also put it in `blender_manifest.toml` as `website` |

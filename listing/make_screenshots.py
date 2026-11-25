@@ -2,8 +2,8 @@
 
     blender --factory-startup --window-geometry 0 0 1920 1080 --python listing/make_screenshots.py
 
-Writes listing/screenshots/0N-*.png (2:1, 1920 x 960: Superhive's gallery ratio, fine for
-extensions.blender.org too), listing/featured.png (16:9, 1920 x 1080, extensions.blender.org)
+Writes listing/screenshots/0N-*.png (2:1, 1920 x 960: Superhive's gallery ratio),
+listing/previews_16x9/0N-*.png (16:9, 1920 x 1080: extensions.blender.org previews), listing/featured.png (16:9, 1920 x 1080, extensions.blender.org)
 and listing/featured.jpg (2:1, Superhive). Only the add-on's own overlay is drawn: there is
 no Blender logo in any shot. Your own Blender session and files aren't touched.
 """
@@ -21,7 +21,9 @@ import shape_draw as sd  # noqa: E402
 
 sd.register()
 SHOTS = os.path.join(HERE, "screenshots")
+PREVIEWS = os.path.join(HERE, "previews_16x9")
 os.makedirs(SHOTS, exist_ok=True)
+os.makedirs(PREVIEWS, exist_ok=True)
 
 GROUND = (Vector((0, 0, 0)), Vector((0, 0, 1)), Vector((1, 0, 0)))
 K = 0.5523  # cubic handle length for a quarter circle
@@ -269,6 +271,8 @@ def run():
             with bpy.context.temp_override(window=win, area=area):
                 bpy.ops.screen.screenshot_area(filepath=raw)
             crop_save(raw, os.path.join(SHOTS, f"{name}.png"), 2.0, 1920)
+            # 16:9 copies for extensions.blender.org, which shows previews at that ratio
+            crop_save(raw, os.path.join(PREVIEWS, f"{name}.png"), 16 / 9, 1920)
             if name == "05-results":  # featured images come from the finished model
                 crop_save(raw, os.path.join(HERE, "featured.png"), 16 / 9, 1920)
                 crop_save(raw, os.path.join(HERE, "featured.jpg"), 2.0, 1920, 'JPEG')
