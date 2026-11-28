@@ -11,7 +11,7 @@ type = "add-on"
 
 website = "https://github.com/DevTomUK/shape-draw"
 
-tags = ["Modeling", "Add Mesh", "3D View"]
+tags = ["Modeling", "Add Mesh"]
 
 blender_version_min = "4.2.0"
 

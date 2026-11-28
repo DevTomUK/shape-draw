@@ -6,6 +6,7 @@
   switch points between corner and curve, and change the height. The object is rebuilt in place,
   keeping its position, parent, modifiers and materials. E with the tool active, the tool header,
   or the Object and right-click menus. With a cut target selected, it edits the newest cutter.
+- Listing tags are now Modeling and Add Mesh.
 
 ## 0.1.0
 
