@@ -14,7 +14,7 @@ Drawing:
   Ctrl               turn grid snapping off while held (edges still lock onto
                      the X / Y axis when nearly lined up; "Lock to Axis" turns that off)
   Backspace / Ctrl+Z remove the last point
-  P / R / C          switch to outline / rectangle / circle (also in the tool header)
+  P / R / C          switch to outline / rectangle / circle (any time with the tool active)
   Esc / RMB          cancel
 Rectangle:
   click or drag      corner to corner (Shift: square)
@@ -25,7 +25,7 @@ Extruding:
   type a number      exact height (Backspace edits, - flips)
   LMB / Enter        finish
   RMB                back to drawing
-Edit Outline (E with the tool active, the tool header, or the Object / right-click menu):
+Edit Outline (E over a shape with the tool active, the tool header, or the Object / right-click menu):
   drag a point / handle      move it (Alt on a handle breaks the curve)
   click an edge              add a point there, keeping the curve's shape
   V / double-click a point   switch it between corner and curve
@@ -1565,6 +1565,23 @@ class VIEW3D_OT_shape_draw(bpy.types.Operator):
             print("Shape Draw text error:", exc)
 
 
+class VIEW3D_OT_shape_draw_mode(bpy.types.Operator):
+    """Choose what the Draw Shape tool draws next"""
+    bl_idname = "view3d.shape_draw_mode"
+    bl_label = "Draw Shape: Choose Shape"
+    bl_options = {'INTERNAL'}
+
+    mode: EnumProperty(items=(('OUTLINE', "Outline", ""), ('RECT', "Rectangle", ""), ('CIRCLE', "Circle", "")))
+
+    def execute(self, context):
+        context.scene.shape_draw.mode = self.mode
+        names = {'OUTLINE': "Outline", 'RECT': "Rectangle", 'CIRCLE': "Circle"}
+        self.report({'INFO'}, f"Draw Shape: {names[self.mode]}")
+        for area in context.screen.areas:
+            area.tag_redraw()
+        return {'FINISHED'}
+
+
 EDIT_HINT = ("Drag: move point / handle   Click edge: add point   V / double-click: corner or curve   "
              "X: delete point   H: height   Ctrl: no snap   Enter: done   Esc: cancel")
 HEIGHT_HINT = ("Move up / down: height   Type: exact height   Click / Enter: back to the outline   "
@@ -1580,8 +1597,21 @@ class VIEW3D_OT_shape_draw_edit(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return (context.area is not None and context.area.type == 'VIEW_3D' and context.mode == 'OBJECT'
-                and outline_owner(context.active_object) is not None)
+        return context.area is not None and context.area.type == 'VIEW_3D' and context.mode == 'OBJECT'
+
+    @staticmethod
+    def _shape_under_mouse(context, event):
+        """The Shape Draw object under the mouse (or the one a cut under it belongs to), if any."""
+        if context.region is None or context.region.type != 'WINDOW' or event is None:
+            return None
+        mouse = (event.mouse_region_x, event.mouse_region_y)
+        if not (0 <= mouse[0] < context.region.width and 0 <= mouse[1] < context.region.height):
+            return None
+        origin = view3d_utils.region_2d_to_origin_3d(context.region, context.region_data, mouse)
+        direction = view3d_utils.region_2d_to_vector_3d(context.region, context.region_data, mouse)
+        dg = context.evaluated_depsgraph_get()
+        hit, _loc, _n, _i, ob, _m = context.scene.ray_cast(dg, origin, direction)
+        return outline_owner(ob.original) if hit and ob is not None else None
 
     # -- coordinates: the object's own local plane z = base_z ----------------
 
@@ -1696,11 +1726,19 @@ class VIEW3D_OT_shape_draw_edit(bpy.types.Operator):
     # -- modal --------------------------------------------------------------
 
     def invoke(self, context, event):
-        self.ob = outline_owner(context.active_object)
+        # The shape under the mouse first: with the Draw Shape tool active a click draws
+        # instead of selecting, so "the selected shape" is often just the last one drawn.
+        self.ob = self._shape_under_mouse(context, event) or outline_owner(context.active_object)
         self.d = load_outline(self.ob)
         if self.d is None or not outline_ok(self.d["points"]):
-            self.report({'WARNING'}, "This object has no outline to edit (only shapes drawn with Shape Draw do)")
+            self.report({'WARNING'}, "No shape to edit here: point at a shape drawn with Shape Draw 0.2+, "
+                                     "or select one")
             return {'CANCELLED'}
+        if context.view_layer.objects.get(self.ob.name) is not None and not self.ob.hide_get():
+            for o in context.selected_objects:
+                o.select_set(False)
+            self.ob.select_set(True)
+            context.view_layer.objects.active = self.ob
         self.pts = [dict(q) for q in self.d["points"]]
         self.original = {k: (list(v) if isinstance(v, list) else v) for k, v in self.d.items()}
         self.original["points"] = [dict(q) for q in self.d["points"]]
@@ -1963,6 +2001,10 @@ class ShapeDrawTool(bpy.types.WorkSpaceTool):
     bl_keymap = (
         ("view3d.shape_draw", {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
         ("view3d.shape_draw_edit", {"type": 'E', "value": 'PRESS'}, None),
+        # Choose the shape before the first click too (while drawing, the tool handles these itself)
+        ("view3d.shape_draw_mode", {"type": 'P', "value": 'PRESS'}, {"properties": [("mode", 'OUTLINE')]}),
+        ("view3d.shape_draw_mode", {"type": 'R', "value": 'PRESS'}, {"properties": [("mode", 'RECT')]}),
+        ("view3d.shape_draw_mode", {"type": 'C', "value": 'PRESS'}, {"properties": [("mode", 'CIRCLE')]}),
     )
 
     def draw_settings(context, layout, tool):
@@ -1979,8 +2021,9 @@ class ShapeDrawTool(bpy.types.WorkSpaceTool):
         layout.prop(props, "attach", text="Attach")
         layout.prop(props, "output", text="")
         layout.prop(props, "bevel")
-        if outline_owner(context.active_object) is not None:
-            layout.operator(VIEW3D_OT_shape_draw_edit.bl_idname, text="Edit Outline", icon='CURVE_BEZCURVE')
+        row = layout.row()
+        row.enabled = outline_owner(context.active_object) is not None
+        row.operator(VIEW3D_OT_shape_draw_edit.bl_idname, text="Edit Outline (E)", icon='CURVE_BEZCURVE')
 
 
 def menu_add(self, context):
@@ -1993,7 +2036,8 @@ def menu_edit(self, context):
         self.layout.operator(VIEW3D_OT_shape_draw_edit.bl_idname, icon='CURVE_BEZCURVE')
 
 
-_classes = (ShapeDrawSettings, ShapeDrawPoint, VIEW3D_OT_shape_draw, VIEW3D_OT_shape_draw_edit)
+_classes = (ShapeDrawSettings, ShapeDrawPoint, VIEW3D_OT_shape_draw, VIEW3D_OT_shape_draw_edit,
+            VIEW3D_OT_shape_draw_mode)
 
 
 def register():

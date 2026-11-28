@@ -6,6 +6,10 @@
   switch points between corner and curve, and change the height. The object is rebuilt in place,
   keeping its position, parent, modifiers and materials. E with the tool active, the tool header,
   or the Object and right-click menus. With a cut target selected, it edits the newest cutter.
+- With the Draw Shape tool active, P / R / C now pick outline / rectangle / circle before the
+  first click too (they used to fall through to Blender's rotate and circle select).
+- E edits the shape under the mouse, not just the selected one (a click with the tool draws
+  rather than selects, so the selection was usually just the last shape drawn).
 - Listing tags are now Modeling and Add Mesh.
 
 ## 0.1.0

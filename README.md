@@ -26,7 +26,7 @@ Pick **Draw Shape** in the toolbar (or Add > Draw Shape).
 | Shift | lock the edge to 15° steps |
 | Ctrl | turn grid snapping off (edges still lock onto the X / Y axis) |
 | Backspace / Ctrl+Z | remove the last point |
-| P / R / C | outline / rectangle / circle |
+| P / R / C | outline / rectangle / circle (also before the first click) |
 | Right-click / Esc | cancel |
 
 | Rectangle and circle | |
@@ -44,7 +44,7 @@ Pick **Draw Shape** in the toolbar (or Add > Draw Shape).
 
 ### Edit an outline later
 
-Select a shape and press **E** with the tool active (or use **Edit Outline** in the tool header, the Object menu or the right-click menu). The outline comes back on the object, wherever it is now:
+With the Draw Shape tool active, point at a shape and press **E** (or select it and use **Edit Outline** in the tool header, the Object menu or the right-click menu). The outline comes back on the object, wherever it is now:
 
 | Edit Outline | |
 | --- | --- |
